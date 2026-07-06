@@ -1,26 +1,225 @@
 @import "tailwindcss";
 
+/**
+ * Nexora design system — "Enterprise Azure".
+ * Very light blue canvas, crisp white cards, a confident blue primary, and
+ * restrained depth. No neon, no heavy shadows — the goal is a calm,
+ * expensive, million-dollar-SaaS feel.
+ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces */
+  --canvas: #eef3fb; /* very light blue app background */
+  --canvas-2: #e6edf9;
+  --surface: #ffffff; /* white cards */
+  --surface-muted: #f6f9fe;
+  --surface-inset: #f1f5fc;
+
+  /* Text */
+  --text: #0f1b2d;
+  --text-secondary: #48576b;
+  --text-muted: #8595a9;
+
+  /* Brand */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-soft: #dbe7fe;
+  --primary-softer: #eef3fe;
+  --accent: #0ea5e9;
+
+  /* Status */
+  --success: #059669;
+  --success-soft: #d1fae5;
+  --warning: #d97706;
+  --warning-soft: #fef3c7;
+  --danger: #dc2626;
+  --danger-soft: #fee2e2;
+  --purple: #7c3aed;
+  --purple-soft: #ede9fe;
+
+  /* Lines & depth */
+  --border: #dde6f3;
+  --border-strong: #c8d5ea;
+  --ring: rgba(37, 99, 235, 0.35);
+  --shadow-sm: 0 1px 2px rgba(15, 27, 45, 0.04), 0 1px 3px rgba(15, 27, 45, 0.06);
+  --shadow-md: 0 4px 12px rgba(20, 45, 90, 0.06), 0 2px 4px rgba(20, 45, 90, 0.04);
+  --shadow-lg: 0 12px 32px rgba(20, 45, 90, 0.10), 0 4px 8px rgba(20, 45, 90, 0.05);
+  --radius: 14px;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-canvas: var(--canvas);
+  --color-canvas-2: var(--canvas-2);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-inset: var(--surface-inset);
+  --color-text: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-softer: var(--primary-softer);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-purple: var(--purple);
+  --color-purple-soft: var(--purple-soft);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --font-sans:
+    var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --radius-card: var(--radius);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--border);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  background-image:
+    radial-gradient(1200px 600px at 100% -10%, rgba(37, 99, 235, 0.06), transparent 60%),
+    radial-gradient(900px 500px at -10% 0%, rgba(14, 165, 233, 0.05), transparent 55%);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+/* --- Reusable component classes ------------------------------------------ */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-hover {
+  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+.card-hover:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.stat-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  border-radius: 10px;
+  padding: 0.55rem 0.95rem;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.btn-soft {
+  background: var(--primary-soft);
+  color: var(--primary-hover);
+}
+.btn-soft:hover {
+  background: #cddffb;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.9rem;
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+}
+.input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.scrollbar-slim::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-slim::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+.scrollbar-slim::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Subtle rise-in for page content — the only motion, kept gentle. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise-in {
+  animation: rise-in 0.35s ease both;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.live-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
 }

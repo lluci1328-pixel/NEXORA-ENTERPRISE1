@@ -1,0 +1,140 @@
+{
+  "name": "Nexora — WhatsApp Omnichannel Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nexora-whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-trigger",
+      "name": "WhatsApp Inbound (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 400],
+      "webhookId": "nexora-whatsapp"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize WhatsApp Cloud API payload into a flat message object.\nconst entry = $input.first().json.entry?.[0]?.changes?.[0]?.value || {};\nconst msg = entry.messages?.[0] || {};\nconst contact = entry.contacts?.[0] || {};\nconst type = msg.type || 'text';\nlet body = '';\nlet contentType = 'TEXT';\nlet mediaId = null;\nif (type === 'text') { body = msg.text?.body || ''; contentType = 'TEXT'; }\nelse if (type === 'image') { body = msg.image?.caption || '[image]'; contentType = 'IMAGE'; mediaId = msg.image?.id; }\nelse if (type === 'audio') { body = '[voice note]'; contentType = 'VOICE_NOTE'; mediaId = msg.audio?.id; }\nelse if (type === 'video') { body = msg.video?.caption || '[video]'; contentType = 'VIDEO'; mediaId = msg.video?.id; }\nelse if (type === 'document') { body = msg.document?.filename || '[document]'; contentType = 'DOCUMENT'; mediaId = msg.document?.id; }\nreturn [{ json: {\n  fromPhone: '+' + (msg.from || contact.wa_id || ''),\n  fromName: contact.profile?.name || 'WhatsApp User',\n  contentType,\n  mediaId,\n  body\n}}];"
+      },
+      "id": "detect-type",
+      "name": "Detect Message Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": true }, "conditions": [ { "leftValue": "={{ $json.contentType }}", "rightValue": "VOICE_NOTE", "operator": { "type": "string", "operation": "equals" } } ] }, "outputKey": "Media" },
+            { "conditions": { "options": { "caseSensitive": true }, "conditions": [ { "leftValue": "={{ $json.contentType }}", "rightValue": "AUDIO", "operator": { "type": "string", "operation": "equals" } } ] }, "outputKey": "Media" }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "switch-media",
+      "name": "Media or Text?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TRANSCRIPTION_URL || 'https://api.openai.com/v1/audio/transcriptions' }}",
+        "authentication": "genericCredentialType",
+        "sendHeaders": true,
+        "options": {}
+      },
+      "id": "transcribe",
+      "name": "Transcribe Audio (optional)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 260],
+      "notes": "Wire this to your speech-to-text provider. Put the transcript into $json.body before calling Nexora."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXORA_BASE_URL }}/api/webhooks/messages/inbound",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [ { "name": "Content-Type", "value": "application/json" } ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"channelType\": \"WHATSAPP\",\n  \"fromPhone\": \"{{ $json.fromPhone }}\",\n  \"fromName\": \"{{ $json.fromName }}\",\n  \"contentType\": \"{{ $json.contentType }}\",\n  \"body\": {{ JSON.stringify($json.body) }}\n}",
+        "options": {}
+      },
+      "id": "nexora-orchestrate",
+      "name": "Nexora AI Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 400],
+      "notes": "Runs the full multi-agent pipeline in Nexora: Reception -> Knowledge -> Sales/Support -> CRM -> Lead Qualification. Auth = Header Auth credential with 'Authorization: Bearer <your Nexora API key>'."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            { "leftValue": "={{ $json.status }}", "rightValue": "REPLIED", "operator": { "type": "string", "operation": "equals" } }
+          ]
+        }
+      },
+      "id": "has-reply",
+      "name": "AI Produced a Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1420, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/{{ $env.WHATSAPP_PHONE_NUMBER_ID }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Content-Type", "value": "application/json" } ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('Detect Message Type').item.json.fromPhone }}\",\n  \"type\": \"text\",\n  \"text\": { \"body\": {{ JSON.stringify($json.reply) }} }\n}",
+        "options": {}
+      },
+      "id": "send-whatsapp",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1660, 300],
+      "notes": "Sends the AI reply back to the customer via WhatsApp Cloud API."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Acknowledge Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1900, 400]
+    }
+  ],
+  "connections": {
+    "WhatsApp Inbound (Webhook)": { "main": [[{ "node": "Detect Message Type", "type": "main", "index": 0 }]] },
+    "Detect Message Type": { "main": [[{ "node": "Media or Text?", "type": "main", "index": 0 }]] },
+    "Media or Text?": { "main": [[{ "node": "Transcribe Audio (optional)", "type": "main", "index": 0 }], [{ "node": "Transcribe Audio (optional)", "type": "main", "index": 0 }], [{ "node": "Nexora AI Orchestrator", "type": "main", "index": 0 }]] },
+    "Transcribe Audio (optional)": { "main": [[{ "node": "Nexora AI Orchestrator", "type": "main", "index": 0 }]] },
+    "Nexora AI Orchestrator": { "main": [[{ "node": "AI Produced a Reply?", "type": "main", "index": 0 }]] },
+    "AI Produced a Reply?": { "main": [[{ "node": "Send WhatsApp Reply", "type": "main", "index": 0 }], [{ "node": "Acknowledge Webhook", "type": "main", "index": 0 }]] },
+    "Send WhatsApp Reply": { "main": [[{ "node": "Acknowledge Webhook", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "Nexora" }]
+}

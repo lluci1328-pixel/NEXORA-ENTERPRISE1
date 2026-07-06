@@ -1,0 +1,80 @@
+{
+  "name": "Nexora — Smart Follow-up Sequence",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 1 }] }
+      },
+      "id": "cron",
+      "name": "Hourly Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NEXORA_BASE_URL }}/api/webhooks/followups/due",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "fetch-due",
+      "name": "Fetch Due Follow-ups",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400],
+      "notes": "Returns follow-ups whose scheduledAt <= now and status = SCHEDULED. (Endpoint scaffold — add to Nexora API when going live.)"
+    },
+    {
+      "parameters": { "fieldToSplitOut": "followups", "options": {} },
+      "id": "split",
+      "name": "Split Out Follow-ups",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            { "leftValue": "={{ $json.customerReplied }}", "rightValue": "={{ false }}", "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      },
+      "id": "stop-check",
+      "name": "Stop if Customer Replied",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [940, 400],
+      "notes": "Halts the sequence the moment the customer responds or converts — no annoying over-messaging."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXORA_BASE_URL }}/api/webhooks/messages/inbound",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"channelType\": \"{{ $json.channel }}\",\n  \"fromPhone\": \"{{ $json.phone }}\",\n  \"body\": {{ JSON.stringify($json.message) }}\n}",
+        "options": {}
+      },
+      "id": "send-followup",
+      "name": "Send Follow-up (via channel)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 320],
+      "notes": "Delivery node — wire to WhatsApp/Email/SMS. The message text is composed by Nexora's Follow-up Agent from the lead's real history."
+    }
+  ],
+  "connections": {
+    "Hourly Schedule": { "main": [[{ "node": "Fetch Due Follow-ups", "type": "main", "index": 0 }]] },
+    "Fetch Due Follow-ups": { "main": [[{ "node": "Split Out Follow-ups", "type": "main", "index": 0 }]] },
+    "Split Out Follow-ups": { "main": [[{ "node": "Stop if Customer Replied", "type": "main", "index": 0 }]] },
+    "Stop if Customer Replied": { "main": [[{ "node": "Send Follow-up (via channel)", "type": "main", "index": 0 }], []] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "Nexora" }]
+}

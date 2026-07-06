@@ -1,0 +1,71 @@
+{
+  "name": "Nexora — Instant Lead Response Call",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nexora-lead-created",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "lead-trigger",
+      "name": "New Lead (Webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 400],
+      "webhookId": "nexora-lead-created",
+      "notes": "Fired by Nexora when a web/campaign lead is created. Payload: { leadId, contactId, phone, name, requirement, source }."
+    },
+    {
+      "parameters": { "amount": 2, "unit": "minutes" },
+      "id": "wait",
+      "name": "Wait 2 Minutes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [460, 400],
+      "notes": "Speed-to-lead: call while the customer is still warm, but not instantly (feels natural)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.VOICE_PROVIDER_URL }}/calls",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"{{ $json.phone }}\",\n  \"agent\": \"voice-qualifier\",\n  \"context\": {\n    \"name\": \"{{ $json.name }}\",\n    \"requirement\": {{ JSON.stringify($json.requirement) }},\n    \"businessId\": \"{{ $json.businessId }}\"\n  },\n  \"webhookUrl\": \"{{ $env.NEXORA_BASE_URL }}/api/webhooks/calls/completed\"\n}",
+        "options": {}
+      },
+      "id": "place-call",
+      "name": "Voice Agent Outbound Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 400],
+      "notes": "Triggers your voice AI provider (Twilio + LLM, Vapi, ElevenLabs, Retell, etc.). The provider reports the outcome to Nexora's /api/webhooks/calls/completed endpoint, which updates the CRM and analytics."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NEXORA_BASE_URL }}/api/webhooks/workflows/runs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"n8nWorkflowId\": \"wf_instant_call\",\n  \"status\": \"SUCCESS\",\n  \"triggerSource\": \"lead:{{ $('New Lead (Webhook)').item.json.source }}\",\n  \"stepsCompleted\": 4,\n  \"totalSteps\": 4\n}",
+        "options": {}
+      },
+      "id": "report-run",
+      "name": "Report Run to Nexora",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 400]
+    }
+  ],
+  "connections": {
+    "New Lead (Webhook)": { "main": [[{ "node": "Wait 2 Minutes", "type": "main", "index": 0 }]] },
+    "Wait 2 Minutes": { "main": [[{ "node": "Voice Agent Outbound Call", "type": "main", "index": 0 }]] },
+    "Voice Agent Outbound Call": { "main": [[{ "node": "Report Run to Nexora", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "Nexora" }]
+}

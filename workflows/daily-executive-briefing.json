@@ -1,0 +1,67 @@
+{
+  "name": "Nexora — Daily Executive Briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }] }
+      },
+      "id": "cron-8am",
+      "name": "Every Day 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NEXORA_BASE_URL }}/api/webhooks/analytics/daily-brief",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "fetch-brief",
+      "name": "Get Analytics Agent Briefing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400],
+      "notes": "Nexora's Analytics Agent compiles yesterday's metrics vs the prior period into an executive briefing (Headline, Wins, Risks, Actions)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/{{ $env.WHATSAPP_PHONE_NUMBER_ID }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $env.OWNER_WHATSAPP }}\",\n  \"type\": \"text\",\n  \"text\": { \"body\": {{ JSON.stringify($json.briefing) }} }\n}",
+        "options": {}
+      },
+      "id": "send-owner",
+      "name": "Send to Owner (WhatsApp)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 320]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.BRIEF_FROM_EMAIL }}",
+        "toEmail": "={{ $env.OWNER_EMAIL }}",
+        "subject": "Your Nexora daily briefing",
+        "html": "={{ $json.briefingHtml }}",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send to Owner (Email)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [700, 480]
+    }
+  ],
+  "connections": {
+    "Every Day 08:00": { "main": [[{ "node": "Get Analytics Agent Briefing", "type": "main", "index": 0 }]] },
+    "Get Analytics Agent Briefing": { "main": [[{ "node": "Send to Owner (WhatsApp)", "type": "main", "index": 0 }, { "node": "Send to Owner (Email)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "Nexora" }]
+}

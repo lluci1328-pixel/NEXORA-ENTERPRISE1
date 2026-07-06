@@ -1,0 +1,776 @@
+// =============================================================================
+// NEXORA — Enterprise AI Automation Platform
+// Multi-tenant data model. Every tenant-owned row carries a businessId and is
+// only ever read/written through the tenancy-scoped repository layer.
+//
+// Dev database: SQLite (zero-setup). Production: PostgreSQL — the schema is
+// kept portable (no enums/Json/Decimal columns; string constants live in
+// src/lib/constants.ts, JSON payloads are stored in *Json string columns).
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy & Identity
+// ---------------------------------------------------------------------------
+
+model Business {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  industry    String // BusinessIndustry constant
+  description String?
+  logoUrl     String?
+  timezone    String   @default("Asia/Kolkata")
+  currency    String   @default("INR")
+  status      String   @default("ACTIVE") // ACTIVE | SUSPENDED
+  settingsJson String  @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships     Membership[]
+  agents          AiAgent[]
+  channels        Channel[]
+  conversations   Conversation[]
+  messages        Message[]
+  contacts        Contact[]
+  companies       Company[]
+  leads           Lead[]
+  pipelines       Pipeline[]
+  deals           Deal[]
+  tasks           Task[]
+  notes           Note[]
+  activities      Activity[]
+  appointments    Appointment[]
+  tags            Tag[]
+  customFields    CustomFieldDefinition[]
+  calls           Call[]
+  documents       KnowledgeDocument[]
+  chunks          KnowledgeChunk[]
+  workflows       Workflow[]
+  workflowRuns    WorkflowRun[]
+  integrations    Integration[]
+  followUps       FollowUp[]
+  notifications   Notification[]
+  dailyMetrics    DailyMetric[]
+  analyticsEvents AnalyticsEvent[]
+  auditLogs       AuditLog[]
+  apiKeys         ApiKey[]
+  agentRuns       AgentRun[]
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  name            String
+  avatarUrl       String?
+  title           String?
+  isPlatformOwner Boolean   @default(false) // sees every business (portfolio view)
+  status          String    @default("ACTIVE") // ACTIVE | INVITED | DISABLED
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  memberships       Membership[]
+  ownedContacts     Contact[]      @relation("ContactOwner")
+  assignedLeads     Lead[]         @relation("LeadAssignee")
+  ownedDeals        Deal[]         @relation("DealOwner")
+  assignedTasks     Task[]         @relation("TaskAssignee")
+  authoredNotes     Note[]
+  activities        Activity[]
+  appointments     Appointment[]  @relation("AppointmentAssignee")
+  transferredCalls  Call[]         @relation("CallTransferee")
+  uploadedDocuments KnowledgeDocument[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  conversations     Conversation[] @relation("ConversationHumanAssignee")
+}
+
+// Role of a user inside one business. A user can belong to many businesses
+// with different roles. Role values: OWNER | ADMIN | MANAGER | AGENT | SUPPORT
+model Membership {
+  id         String   @id @default(cuid())
+  userId     String
+  businessId String
+  role       String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, businessId])
+  @@index([businessId])
+}
+
+// ---------------------------------------------------------------------------
+// AI Agents & Runtime
+// ---------------------------------------------------------------------------
+
+model AiAgent {
+  id           String   @id @default(cuid())
+  businessId   String
+  type         String // AgentType constant (RECEPTION, SALES, SUPPORT, VOICE, FOLLOW_UP, LEAD_QUALIFICATION, APPOINTMENT, CRM, KNOWLEDGE, ANALYTICS)
+  name         String
+  description  String
+  systemPrompt String
+  model        String   @default("claude-sonnet-5")
+  temperature  Float    @default(0.4)
+  status       String   @default("AWAITING_API_KEY") // ACTIVE | PAUSED | AWAITING_API_KEY | ERROR
+  configJson   String   @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  runs          AgentRun[]
+  conversations Conversation[] @relation("ConversationAiAssignee")
+  messages      Message[]      @relation("MessageSenderAgent")
+  calls         Call[]         @relation("CallHandlerAgent")
+
+  @@unique([businessId, type])
+  @@index([businessId])
+}
+
+// Every discrete action an agent performs — the audit trail behind
+// "which AI messaged whom this month" and all AI performance analytics.
+model AgentRun {
+  id             String    @id @default(cuid())
+  businessId     String
+  agentId        String
+  action         String // AgentAction constant (REPLY_MESSAGE, QUALIFY_LEAD, BOOK_APPOINTMENT, ...)
+  status         String    @default("COMPLETED") // COMPLETED | FAILED | RUNNING
+  conversationId String?
+  leadId         String?
+  contactId      String?
+  inputSummary   String?
+  outputSummary  String?
+  tokensUsed     Int       @default(0)
+  durationMs     Int       @default(0)
+  error          String?
+  createdAt      DateTime  @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  agent    AiAgent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, createdAt])
+  @@index([agentId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Omnichannel Communication
+// ---------------------------------------------------------------------------
+
+model Channel {
+  id         String   @id @default(cuid())
+  businessId String
+  type       String // ChannelType constant (WHATSAPP, WEBSITE_CHAT, INSTAGRAM, FACEBOOK, TELEGRAM, EMAIL, PHONE, SMS)
+  name       String
+  status     String   @default("DISCONNECTED") // CONNECTED | DISCONNECTED | ERROR
+  configJson String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, type])
+}
+
+model Conversation {
+  id               String    @id @default(cuid())
+  businessId       String
+  contactId        String
+  channelType      String // ChannelType constant
+  status           String    @default("AI_HANDLING") // OPEN | AI_HANDLING | HUMAN_TAKEOVER | RESOLVED
+  subject          String?
+  aiAgentId        String?
+  humanAssigneeId  String?
+  aiSummary        String?
+  sentiment        String? // POSITIVE | NEUTRAL | NEGATIVE
+  unreadCount      Int       @default(0)
+  lastMessageAt    DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  business      Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact       Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  aiAgent       AiAgent?  @relation("ConversationAiAssignee", fields: [aiAgentId], references: [id])
+  humanAssignee User?     @relation("ConversationHumanAssignee", fields: [humanAssigneeId], references: [id])
+  messages      Message[]
+
+  @@index([businessId, lastMessageAt])
+  @@index([businessId, status])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  businessId     String
+  conversationId String
+  direction      String // INBOUND | OUTBOUND
+  senderType     String // CUSTOMER | AI_AGENT | HUMAN
+  senderAgentId  String?
+  contentType    String   @default("TEXT") // TEXT | IMAGE | AUDIO | VIDEO | DOCUMENT | VOICE_NOTE | LOCATION
+  body           String
+  mediaUrl       String?
+  transcription  String?
+  deliveryStatus String   @default("SENT") // QUEUED | SENT | DELIVERED | READ | FAILED
+  createdAt      DateTime @default(now())
+
+  business     Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderAgent  AiAgent?     @relation("MessageSenderAgent", fields: [senderAgentId], references: [id])
+
+  @@index([conversationId, createdAt])
+  @@index([businessId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Pulse CRM
+// ---------------------------------------------------------------------------
+
+model Contact {
+  id               String    @id @default(cuid())
+  businessId       String
+  firstName        String
+  lastName         String?
+  email            String?
+  phone            String?
+  whatsapp         String?
+  companyId        String?
+  source           String? // LeadSource constant
+  lifecycleStage   String    @default("LEAD") // LEAD | PROSPECT | CUSTOMER | CHURNED
+  ownerId          String?
+  customFieldsJson String    @default("{}")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  company       Company?       @relation(fields: [companyId], references: [id])
+  owner         User?          @relation("ContactOwner", fields: [ownerId], references: [id])
+  conversations Conversation[]
+  leads         Lead[]
+  deals         Deal[]
+  appointments  Appointment[]
+  calls         Call[]
+  followUps     FollowUp[]
+  tags          ContactTag[]
+  activities    Activity[]
+  tasks         Task[]
+  notes         Note[]
+
+  @@index([businessId, createdAt])
+  @@index([businessId, phone])
+}
+
+model Company {
+  id         String   @id @default(cuid())
+  businessId String
+  name       String
+  industry   String?
+  website    String?
+  phone      String?
+  address    String?
+  size       String? // 1-10 | 11-50 | 51-200 | 201-1000 | 1000+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contacts Contact[]
+  deals    Deal[]
+
+  @@index([businessId])
+}
+
+model Lead {
+  id               String    @id @default(cuid())
+  businessId       String
+  contactId        String
+  title            String
+  source           String // LeadSource constant (WHATSAPP, WEBSITE, INSTAGRAM, FACEBOOK, REFERRAL, WALK_IN, PHONE, EMAIL, CAMPAIGN)
+  status           String    @default("NEW") // NEW | CONTACTED | QUALIFIED | UNQUALIFIED | CONVERTED | LOST
+  score            Int       @default(0) // 0-100, set by Lead Qualification Agent
+  scoreFactorsJson String    @default("[]") // [{factor, weight, detail}]
+  budget           Float?
+  requirement      String?
+  assignedToId     String?
+  qualifiedByAi    Boolean   @default(false)
+  convertedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact    Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assignedTo User?      @relation("LeadAssignee", fields: [assignedToId], references: [id])
+  tags       LeadTag[]
+  activities Activity[]
+  followUps  FollowUp[]
+
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+}
+
+model Pipeline {
+  id         String   @id @default(cuid())
+  businessId String
+  name       String
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  stages   Stage[]
+  deals    Deal[]
+
+  @@index([businessId])
+}
+
+model Stage {
+  id          String @id @default(cuid())
+  pipelineId  String
+  name        String
+  order       Int
+  probability Int    @default(0) // win probability %
+  color       String @default("#2563EB")
+
+  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  deals    Deal[]
+
+  @@index([pipelineId, order])
+}
+
+model Deal {
+  id                String    @id @default(cuid())
+  businessId        String
+  pipelineId        String
+  stageId           String
+  contactId         String
+  companyId         String?
+  title             String
+  value             Float     @default(0)
+  currency          String    @default("INR")
+  status            String    @default("OPEN") // OPEN | WON | LOST
+  expectedCloseDate DateTime?
+  wonAt             DateTime?
+  lostAt            DateTime?
+  lostReason        String?
+  ownerId           String?
+  aiSummary         String?
+  source            String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  pipeline   Pipeline   @relation(fields: [pipelineId], references: [id])
+  stage      Stage      @relation(fields: [stageId], references: [id])
+  contact    Contact    @relation(fields: [contactId], references: [id])
+  company    Company?   @relation(fields: [companyId], references: [id])
+  owner      User?      @relation("DealOwner", fields: [ownerId], references: [id])
+  tags       DealTag[]
+  activities Activity[]
+  tasks      Task[]
+  notes      Note[]
+
+  @@index([businessId, status])
+  @@index([businessId, stageId])
+}
+
+model Task {
+  id            String    @id @default(cuid())
+  businessId    String
+  title         String
+  description   String?
+  dueAt         DateTime?
+  priority      String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  status        String    @default("OPEN") // OPEN | IN_PROGRESS | COMPLETED | CANCELLED
+  assignedToId  String?
+  contactId     String?
+  dealId        String?
+  createdByType String    @default("HUMAN") // HUMAN | AI_AGENT | SYSTEM
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  completedAt   DateTime?
+
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  assignedTo User?    @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  contact    Contact? @relation(fields: [contactId], references: [id])
+  deal       Deal?    @relation(fields: [dealId], references: [id])
+
+  @@index([businessId, status])
+  @@index([assignedToId, dueAt])
+}
+
+model Note {
+  id           String   @id @default(cuid())
+  businessId   String
+  body         String
+  authorUserId String?
+  authorType   String   @default("HUMAN") // HUMAN | AI_AGENT
+  contactId    String?
+  dealId       String?
+  createdAt    DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  author   User?    @relation(fields: [authorUserId], references: [id])
+  contact  Contact? @relation(fields: [contactId], references: [id])
+  deal     Deal?    @relation(fields: [dealId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+// Unified timeline. Every meaningful event in the system lands here so the
+// CRM can render a single chronological history per contact/lead/deal.
+model Activity {
+  id           String   @id @default(cuid())
+  businessId   String
+  type         String // ActivityType constant
+  title        String
+  description  String?
+  actorType    String   @default("SYSTEM") // AI_AGENT | USER | SYSTEM | CUSTOMER
+  actorUserId  String?
+  actorAgentId String?
+  contactId    String?
+  leadId       String?
+  dealId       String?
+  metadataJson String   @default("{}")
+  createdAt    DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  actor    User?    @relation(fields: [actorUserId], references: [id])
+  contact  Contact? @relation(fields: [contactId], references: [id])
+  lead     Lead?    @relation(fields: [leadId], references: [id])
+  deal     Deal?    @relation(fields: [dealId], references: [id])
+
+  @@index([businessId, createdAt])
+  @@index([contactId, createdAt])
+}
+
+model Appointment {
+  id            String    @id @default(cuid())
+  businessId    String
+  contactId     String
+  title         String
+  type          String // SITE_VISIT | CONSULTATION | MEETING | CALL | CHECK_IN | TABLE_RESERVATION | DEMO
+  scheduledAt   DateTime
+  endAt         DateTime?
+  location      String?
+  status        String    @default("SCHEDULED") // SCHEDULED | CONFIRMED | COMPLETED | CANCELLED | NO_SHOW
+  assignedToId  String?
+  bookedByType  String    @default("HUMAN") // HUMAN | AI_AGENT | CUSTOMER
+  notes         String?
+  reminderSentAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assignedTo User?    @relation("AppointmentAssignee", fields: [assignedToId], references: [id])
+
+  @@index([businessId, scheduledAt])
+}
+
+model Tag {
+  id         String @id @default(cuid())
+  businessId String
+  name       String
+  color      String @default("#2563EB")
+
+  business Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contacts ContactTag[]
+  leads    LeadTag[]
+  deals    DealTag[]
+
+  @@unique([businessId, name])
+}
+
+model ContactTag {
+  contactId String
+  tagId     String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+}
+
+model LeadTag {
+  leadId String
+  tagId  String
+  lead   Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([leadId, tagId])
+}
+
+model DealTag {
+  dealId String
+  tagId  String
+  deal   Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([dealId, tagId])
+}
+
+model CustomFieldDefinition {
+  id         String  @id @default(cuid())
+  businessId String
+  entityType String // CONTACT | LEAD | DEAL
+  key        String
+  label      String
+  fieldType  String // TEXT | NUMBER | DATE | SELECT | BOOLEAN
+  optionsJson String @default("[]")
+  required   Boolean @default(false)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, entityType, key])
+}
+
+// ---------------------------------------------------------------------------
+// Voice AI — Calls
+// ---------------------------------------------------------------------------
+
+model Call {
+  id                String    @id @default(cuid())
+  businessId        String
+  contactId         String?
+  direction         String // INBOUND | OUTBOUND
+  status            String    @default("COMPLETED") // IN_PROGRESS | COMPLETED | MISSED | FAILED | TRANSFERRED
+  durationSec       Int       @default(0)
+  recordingUrl      String?
+  transcript        String?
+  aiSummary         String?
+  sentiment         String? // POSITIVE | NEUTRAL | NEGATIVE
+  outcome           String? // CallOutcome constant (APPOINTMENT_BOOKED, QUALIFIED, FOLLOW_UP_SCHEDULED, NOT_INTERESTED, NO_ANSWER, TRANSFERRED_TO_HUMAN)
+  handledByAgentId  String?
+  transferredToId   String?
+  startedAt         DateTime  @default(now())
+  endedAt           DateTime?
+
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact       Contact? @relation(fields: [contactId], references: [id])
+  handledBy     AiAgent? @relation("CallHandlerAgent", fields: [handledByAgentId], references: [id])
+  transferredTo User?    @relation("CallTransferee", fields: [transferredToId], references: [id])
+
+  @@index([businessId, startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge Base (RAG)
+// ---------------------------------------------------------------------------
+
+model KnowledgeDocument {
+  id           String   @id @default(cuid())
+  businessId   String
+  title        String
+  sourceType   String // PDF | DOCX | XLSX | WEBSITE | FAQ | POLICY | CATALOG | IMAGE | TEXT
+  sourceUrl    String?
+  fileName     String?
+  sizeBytes    Int      @default(0)
+  status       String   @default("PROCESSING") // PROCESSING | READY | FAILED
+  chunkCount   Int      @default(0)
+  uploadedById String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  business   Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  uploadedBy User?            @relation(fields: [uploadedById], references: [id])
+  chunks     KnowledgeChunk[]
+
+  @@index([businessId])
+}
+
+// Embeddings are stored as a JSON float array in dev; swap to pgvector on
+// PostgreSQL without touching the retrieval interface (src/lib/ai/retrieval.ts).
+model KnowledgeChunk {
+  id            String @id @default(cuid())
+  businessId    String
+  documentId    String
+  order         Int
+  content       String
+  tokenCount    Int    @default(0)
+  embeddingJson String @default("[]")
+
+  business Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  document KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, order])
+  @@index([businessId])
+}
+
+// ---------------------------------------------------------------------------
+// Workflows (n8n)
+// ---------------------------------------------------------------------------
+
+model Workflow {
+  id            String   @id @default(cuid())
+  businessId    String
+  name          String
+  description   String
+  category      String // MESSAGING | VOICE | FOLLOW_UP | LEAD_ROUTING | ANALYTICS | NOTIFICATIONS
+  trigger       String // human-readable trigger, e.g. "WhatsApp message received"
+  n8nWorkflowId String?
+  status        String   @default("DRAFT") // ACTIVE | PAUSED | DRAFT
+  definitionJson String  @default("{}") // node graph used by the visual workflow viewer
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  runs     WorkflowRun[]
+
+  @@index([businessId])
+}
+
+model WorkflowRun {
+  id             String    @id @default(cuid())
+  businessId     String
+  workflowId     String
+  status         String    @default("RUNNING") // RUNNING | SUCCESS | FAILED
+  triggerSource  String? // e.g. "whatsapp:+91..." or "schedule"
+  stepsCompleted Int       @default(0)
+  totalSteps     Int       @default(0)
+  durationMs     Int       @default(0)
+  error          String?
+  metadataJson   String    @default("{}")
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, startedAt])
+  @@index([workflowId, startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Integrations
+// ---------------------------------------------------------------------------
+
+model Integration {
+  id                   String   @id @default(cuid())
+  businessId           String
+  provider             String // IntegrationProvider constant
+  name                 String
+  status               String   @default("AWAITING_CREDENTIALS") // CONNECTED | DISCONNECTED | ERROR | AWAITING_CREDENTIALS
+  configJson           String   @default("{}") // non-secret settings
+  encryptedCredentials String? // AES-encrypted secret material, never returned by APIs
+  lastSyncAt           DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, provider])
+}
+
+// ---------------------------------------------------------------------------
+// Automation — Follow-ups
+// ---------------------------------------------------------------------------
+
+model FollowUp {
+  id           String    @id @default(cuid())
+  businessId   String
+  contactId    String
+  leadId       String?
+  channel      String // ChannelType constant
+  message      String
+  sequenceStep Int       @default(1) // Day 1 / Day 3 / Day 7 ...
+  scheduledAt  DateTime
+  status       String    @default("SCHEDULED") // SCHEDULED | SENT | CANCELLED | FAILED
+  sentAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  lead     Lead?    @relation(fields: [leadId], references: [id])
+
+  @@index([businessId, scheduledAt])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications, Analytics, Audit
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id           String    @id @default(cuid())
+  businessId   String
+  userId       String?
+  type         String // HIGH_VALUE_LEAD | APPOINTMENT_BOOKED | DEAL_WON | HUMAN_TAKEOVER_REQUESTED | WORKFLOW_FAILED | SYSTEM
+  title        String
+  body         String
+  priority     String    @default("NORMAL") // LOW | NORMAL | HIGH | CRITICAL
+  readAt       DateTime?
+  metadataJson String    @default("{}")
+  createdAt    DateTime  @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@index([businessId, createdAt])
+  @@index([userId, readAt])
+}
+
+// Pre-aggregated day-level metrics that power dashboard charts cheaply.
+// Metric keys live in src/lib/constants.ts (MetricKey).
+model DailyMetric {
+  id         String   @id @default(cuid())
+  businessId String
+  date       DateTime
+  metric     String // REVENUE | NEW_LEADS | CONVERSATIONS | AI_MESSAGES | CALLS | APPOINTMENTS | DEALS_WON | CSAT ...
+  value      Float
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, date, metric])
+  @@index([businessId, metric, date])
+}
+
+// Raw event stream for future BI / anomaly detection.
+model AnalyticsEvent {
+  id           String   @id @default(cuid())
+  businessId   String
+  type         String
+  value        Float?
+  metadataJson String   @default("{}")
+  occurredAt   DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, type, occurredAt])
+}
+
+// Enterprise audit trail — every sensitive mutation is recorded.
+model AuditLog {
+  id           String   @id @default(cuid())
+  businessId   String?
+  userId       String?
+  action       String // e.g. "lead.update", "settings.change", "user.invite"
+  entityType   String?
+  entityId     String?
+  metadataJson String   @default("{}")
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  business Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User?     @relation(fields: [userId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+// Scoped API keys used by n8n and external systems to call Nexora's REST API.
+model ApiKey {
+  id         String    @id @default(cuid())
+  businessId String
+  name       String
+  prefix     String // first 8 chars, shown in UI
+  hashedKey  String    @unique
+  scopesJson String    @default("[]") // e.g. ["webhooks:write","crm:write"]
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+}
