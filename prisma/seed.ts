@@ -13,13 +13,18 @@
  */
 
 import { PrismaClient } from "@prisma/client";
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 import bcrypt from "bcryptjs";
 import { createHash } from "crypto";
 
-const adapter = new PrismaBetterSqlite3({
-  url: process.env.DATABASE_URL ?? "file:./prisma/dev.db",
-});
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error("DATABASE_URL environment variable is required for seeding");
+}
+
+const pool = new pg.Pool({ connectionString });
+const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 // --- deterministic PRNG so reseeding produces stable demo data -------------
@@ -208,43 +213,42 @@ function phoneNumber(): string {
 async function main() {
   console.log("Seeding Nexora demo data...");
 
-  // Wipe in dependency order (SQLite dev database).
-  await prisma.$transaction([
-    prisma.agentRun.deleteMany(),
-    prisma.workflowRun.deleteMany(),
-    prisma.workflow.deleteMany(),
-    prisma.followUp.deleteMany(),
-    prisma.notification.deleteMany(),
-    prisma.dailyMetric.deleteMany(),
-    prisma.analyticsEvent.deleteMany(),
-    prisma.auditLog.deleteMany(),
-    prisma.apiKey.deleteMany(),
-    prisma.knowledgeChunk.deleteMany(),
-    prisma.knowledgeDocument.deleteMany(),
-    prisma.call.deleteMany(),
-    prisma.message.deleteMany(),
-    prisma.conversation.deleteMany(),
-    prisma.appointment.deleteMany(),
-    prisma.activity.deleteMany(),
-    prisma.note.deleteMany(),
-    prisma.task.deleteMany(),
-    prisma.contactTag.deleteMany(),
-    prisma.leadTag.deleteMany(),
-    prisma.dealTag.deleteMany(),
-    prisma.deal.deleteMany(),
-    prisma.stage.deleteMany(),
-    prisma.pipeline.deleteMany(),
-    prisma.lead.deleteMany(),
-    prisma.contact.deleteMany(),
-    prisma.company.deleteMany(),
-    prisma.customFieldDefinition.deleteMany(),
-    prisma.tag.deleteMany(),
-    prisma.channel.deleteMany(),
-    prisma.aiAgent.deleteMany(),
-    prisma.membership.deleteMany(),
-    prisma.business.deleteMany(),
-    prisma.user.deleteMany(),
-  ]);
+  // Wipe in dependency order (PostgreSQL).
+  // Sequential deletions to avoid connection pooler timeouts.
+  await prisma.agentRun.deleteMany();
+  await prisma.workflowRun.deleteMany();
+  await prisma.workflow.deleteMany();
+  await prisma.followUp.deleteMany();
+  await prisma.notification.deleteMany();
+  await prisma.dailyMetric.deleteMany();
+  await prisma.analyticsEvent.deleteMany();
+  await prisma.auditLog.deleteMany();
+  await prisma.apiKey.deleteMany();
+  await prisma.knowledgeChunk.deleteMany();
+  await prisma.knowledgeDocument.deleteMany();
+  await prisma.call.deleteMany();
+  await prisma.message.deleteMany();
+  await prisma.conversation.deleteMany();
+  await prisma.appointment.deleteMany();
+  await prisma.activity.deleteMany();
+  await prisma.note.deleteMany();
+  await prisma.task.deleteMany();
+  await prisma.contactTag.deleteMany();
+  await prisma.leadTag.deleteMany();
+  await prisma.dealTag.deleteMany();
+  await prisma.deal.deleteMany();
+  await prisma.stage.deleteMany();
+  await prisma.pipeline.deleteMany();
+  await prisma.lead.deleteMany();
+  await prisma.contact.deleteMany();
+  await prisma.company.deleteMany();
+  await prisma.customFieldDefinition.deleteMany();
+  await prisma.tag.deleteMany();
+  await prisma.channel.deleteMany();
+  await prisma.aiAgent.deleteMany();
+  await prisma.membership.deleteMany();
+  await prisma.business.deleteMany();
+  await prisma.user.deleteMany();
 
   const passwordHash = await bcrypt.hash(PASSWORD, 10);
 
